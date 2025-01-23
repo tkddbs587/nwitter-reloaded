@@ -1,8 +1,9 @@
-import { addDoc, collection } from "firebase/firestore";
+import { addDoc, collection, updateDoc } from "firebase/firestore";
 import { useState } from "react";
 import * as React from "react";
 import { styled } from "styled-components";
-import { auth, db } from "../firebase";
+import { auth, db, storage } from "../firebase";
+import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 
 const Form = styled.form`
   display: flex;
@@ -60,41 +61,26 @@ const SubmitBtn = styled.input`
 `;
 
 export default function PostTweetForm() {
+  const FILE_SIZE_MAX_LIMIT = 1024 * 1024; // 1MB
+
   const [isLoading, setLoading] = useState(false);
   const [tweet, setTweet] = useState("");
-  const [file, setFile] = useState<string | null>(null);
+  const [file, setFile] = useState<File | null>(null);
 
   const onChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setTweet(e.target.value);
   };
 
-  // const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-  //   const { files } = e.target;
-  //   if (files && files.length === 1) {
-  //     setFile(files[0]);
-  //   }
-  // };
-  // base64 인코딩
-  const handleFileChange = (
-    event: React.ChangeEvent<HTMLInputElement>,
-    onFileLoad: (fileData: string) => void
-  ) => {
-    const { files } = event.target;
-    if (files && files.length === 1) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const result = reader.result as string;
-        console.log("File data encoded:", result); // 확인 로그 추가
-        onFileLoad(result); // 파일 데이터를 콜백으로 전달
-      };
-      reader.readAsDataURL(files[0]);
-    }
-  };
-
   const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    handleFileChange(e, (fileData) => {
-      setFile(fileData);
-    });
+    const { files } = e.target;
+    if (files && files.length === 1) {
+      if (files[0].size <= FILE_SIZE_MAX_LIMIT) {
+        setFile(files[0]);
+      } else {
+        alert("파일의 사이즈는 1MB 미만이여야 합니다.");
+        return;
+      }
+    }
   };
 
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -104,13 +90,23 @@ export default function PostTweetForm() {
 
     try {
       setLoading(true);
-      await addDoc(collection(db, "tweets"), {
+      const doc = await addDoc(collection(db, "tweets"), {
         tweet,
         createdAt: Date.now(),
         username: user.displayName || "Anonymous",
         userId: user.uid,
-        fileData: file,
       });
+
+      if (file) {
+        const locationRef = ref(storage, `tweets/${user.uid}/${doc.id}`);
+        const result = await uploadBytes(locationRef, file);
+        const url = await getDownloadURL(result.ref);
+        await updateDoc(doc, {
+          photo: url,
+        });
+        setTweet("");
+        setFile(null);
+      }
     } catch (e) {
       console.log(e);
     } finally {
